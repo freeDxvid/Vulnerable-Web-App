@@ -1,0 +1,53 @@
+services:
+
+  web:
+    restart: always
+    container_name: datasync_web
+    build:
+      context: .
+      dockerfile: Dockerfile.php
+      args:
+        UID: 1000
+        GID: 1000
+        XXE_FLAG: 'FLAG_PLACEHOLDER_xxe'
+        TYPE_JUGGLING_FLAG: 'FLAG_PLACEHOLDER_type_juggling'
+    volumes:
+      - ./web:/var/www/html/
+    ports:
+      - '127.0.0.1:8000:80'
+    environment:
+      TYPE_JUGGLING_FLAG: 'FLAG_PLACEHOLDER_type_juggling'
+    networks:
+      - internal
+    depends_on:
+      - secret-service
+      - metadata
+
+  secret-service:
+    image: python:3.11-alpine
+    container_name: datasync_secret
+    command: ["python3", "/app/secret-service.py"]
+    volumes:
+      - ./secret-service.py:/app/secret-service.py:ro
+    environment:
+      SSRF_FLAG: 'FLAG_PLACEHOLDER_ssrf'
+    networks:
+      - internal
+
+  metadata:
+    image: python:3.11-alpine
+    container_name: datasync_metadata
+    hostname: metadata.internal
+    command: ["python3", "/app/metadata.py"]
+    volumes:
+      - ./metadata.py:/app/metadata.py:ro
+    environment:
+      METADATA_FLAG: 'FLAG_PLACEHOLDER_metadata'
+    networks:
+      - internal
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
